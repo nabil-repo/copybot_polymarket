@@ -1,5 +1,8 @@
 import type { Metadata } from 'next';
 import './globals.css';
+import '@rainbow-me/rainbowkit/styles.css';
+import { RainbowProvider } from './rainbow-provider';
+import Navbar from '@/components/layout/Navbar';
 
 export const metadata: Metadata = {
   title: 'Polymarket Copy Trading Bot',
@@ -12,8 +15,15 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body>{children}</body>
+    <html lang="en" suppressHydrationWarning>
+      <body>
+        <RainbowProvider>
+          <Navbar />
+          <div className="px-4 sm:px-6 lg:px-8">
+            {children}
+          </div>
+        </RainbowProvider>
+      </body>
     </html>
   );
 }

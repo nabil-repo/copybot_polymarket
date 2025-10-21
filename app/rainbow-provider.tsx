@@ -1,35 +1,32 @@
 "use client";
-import { ReactNode } from "react";
-import {
-  getDefaultWallets,
-  RainbowKitProvider,
-} from "@rainbow-me/rainbowkit";
-import { WagmiConfig, createConfig, configureChains } from "wagmi";
+import { ReactNode, useState } from "react";
+import { RainbowKitProvider, getDefaultConfig } from "@rainbow-me/rainbowkit";
+import { WagmiProvider, http } from "wagmi";
 import { mainnet, sepolia } from "wagmi/chains";
-import { publicProvider } from "wagmi/providers/public";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
+const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "demo";
 
-const { chains, publicClient } = configureChains(
-  [mainnet, sepolia],
-  [publicProvider()]
-);
-
-const { connectors } = getDefaultWallets({
+const config = getDefaultConfig({
   appName: "Polymarket Copy Trading Bot",
-  projectId: "YOUR_PROJECT_ID", // Replace with your WalletConnect project ID
-  chains,
-});
-
-const wagmiConfig = createConfig({
-  autoConnect: true,
-  connectors,
-  publicClient,
+  projectId,
+  chains: [mainnet, sepolia],
+  transports: {
+    [mainnet.id]: http(),
+    [sepolia.id]: http(),
+  },
+  ssr: true,
 });
 
 export function RainbowProvider({ children }: { children: ReactNode }) {
+  const [queryClient] = useState(() => new QueryClient());
   return (
-    <WagmiConfig config={wagmiConfig}>
-      <RainbowKitProvider chains={chains}>{children}</RainbowKitProvider>
-    </WagmiConfig>
+    <WagmiProvider config={config}>
+      <QueryClientProvider client={queryClient}>
+        <RainbowKitProvider>
+          {children}
+        </RainbowKitProvider>
+      </QueryClientProvider>
+    </WagmiProvider>
   );
 }

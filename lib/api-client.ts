@@ -106,6 +106,16 @@ export const login = async (email: string, password: string) => {
   return response.data as { user: { id: number; email: string }; token: string };
 };
 
+// Wallet auth
+export const getWalletNonce = async (address: string) => {
+  const response = await api.get('/api/auth/wallet/nonce', { params: { address } });
+  return response.data as { nonce: string };
+};
+export const verifyWalletSignature = async (address: string, signature: string) => {
+  const response = await api.post('/api/auth/wallet/verify', { address, signature });
+  return response.data as { user: { id: number; email: string }; token: string };
+};
+
 // User profile
 export const getUserProfile = async () => {
   const response = await api.get('/api/user/profile');

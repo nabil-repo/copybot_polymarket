@@ -2,7 +2,10 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { login, register, setAuthToken } from "@/lib/api-client";
+import { login, register, setAuthToken, getWalletNonce, verifyWalletSignature } from "@/lib/api-client";
+import GlassCard from "@/components/ui/GlassCard";
+import { useAccount, useSignMessage } from "wagmi";
+import { ConnectButton } from "@rainbow-me/rainbowkit";
 
 export default function AuthPage() {
   const [isLogin, setIsLogin] = useState(true);
@@ -11,6 +14,8 @@ export default function AuthPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const router = useRouter();
+  const { address, isConnected } = useAccount();
+  const { signMessageAsync } = useSignMessage();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,21 +39,43 @@ export default function AuthPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
-      <div className="max-w-md w-full bg-white rounded-lg shadow-lg p-8">
-        <h1 className="text-3xl font-bold text-center text-gray-900 mb-2">
-          Polymarket Copy Trading
-        </h1>
-        <p className="text-center text-gray-600 mb-8">
-          {isLogin ? "Sign in to your account" : "Create a new account"}
-        </p>
+    <div className="min-h-screen flex items-center justify-center px-4">
+      <GlassCard className="max-w-md w-full p-8">
+        <h1 className="text-3xl font-bold text-center text-white mb-2">Polymarket Copy Trading</h1>
+        <p className="text-center text-white/70 mb-8">{isLogin ? "Sign in to your account" : "Create a new account"}</p>
 
+        {/* Wallet Connect Auth */}
+        <div className="mb-6">
+          <div className="flex items-center justify-center mb-3">
+            <ConnectButton label="Connect Wallet" />
+          </div>
+          <button
+            disabled={!isConnected || !address}
+            onClick={async () => {
+              setError("");
+              setLoading(true);
+              try {
+                const { nonce } = await getWalletNonce(address!);
+                const message = `Sign in to Polymarket Copy Bot\nAddress: ${address}\nNonce: ${nonce}`;
+                const signature = await signMessageAsync({ message });
+                const { token } = await verifyWalletSignature(address!, signature);
+                setAuthToken(token);
+                router.push("/");
+              } catch (e: any) {
+                setError(e?.response?.data?.error || "Wallet auth failed");
+              } finally {
+                setLoading(false);
+              }
+            }}
+            className="w-full rounded-xl bg-white/10 hover:bg-white/20 text-white py-2 px-4 disabled:bg-white/5 disabled:text-white/40 disabled:cursor-not-allowed transition-colors"
+          >
+            {isConnected ? "Sign in with Wallet" : "Connect a wallet to sign in"}
+          </button>
+        </div>
+{/* 
         <form onSubmit={handleSubmit} className="space-y-6">
           <div>
-            <label
-              htmlFor="email"
-              className="block text-sm font-medium text-gray-700 mb-2"
-            >
+            <label htmlFor="email" className="block text-sm font-medium text-white/80 mb-2">
               Email
             </label>
             <input
@@ -57,16 +84,13 @@ export default function AuthPage() {
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 rounded-xl bg-white/10 border border-white/20 text-white placeholder:text-white/60 focus:outline-none focus:ring-2 focus:ring-white/30"
               placeholder="you@example.com"
             />
           </div>
 
           <div>
-            <label
-              htmlFor="password"
-              className="block text-sm font-medium text-gray-700 mb-2"
-            >
+            <label htmlFor="password" className="block text-sm font-medium text-white/80 mb-2">
               Password
             </label>
             <input
@@ -75,13 +99,13 @@ export default function AuthPage() {
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 rounded-xl bg-white/10 border border-white/20 text-white placeholder:text-white/60 focus:outline-none focus:ring-2 focus:ring-white/30"
               placeholder="••••••••"
             />
           </div>
 
           {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
+            <div className="bg-rose-500/10 border border-rose-400/30 text-rose-200 px-4 py-3 rounded">
               {error}
             </div>
           )}
@@ -89,26 +113,26 @@ export default function AuthPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+            className="w-full rounded-xl bg-blue-600 hover:bg-blue-500 text-white py-2 px-4 disabled:bg-white/10 disabled:text-white/50 disabled:cursor-not-allowed transition-colors"
           >
             {loading ? "Processing..." : isLogin ? "Sign In" : "Sign Up"}
           </button>
-        </form>
+        </form> */}
 
-        <div className="mt-6 text-center">
+        {/* <div className="mt-6 text-center">
           <button
             onClick={() => {
               setIsLogin(!isLogin);
               setError("");
             }}
-            className="text-blue-600 hover:text-blue-700 text-sm"
+            className="text-white/80 hover:text-white text-sm"
           >
             {isLogin
               ? "Don't have an account? Sign up"
               : "Already have an account? Sign in"}
           </button>
-        </div>
-      </div>
+        </div> */}
+      </GlassCard>
     </div>
   );
 }

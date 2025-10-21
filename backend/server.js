@@ -77,7 +77,7 @@ io.on('connection', (socket) => {
     socket.join(`wallet:${walletAddress}`);
   });
 
-  // Subscribe to user-specific updates
+  // Subscribe to user-specific updates (supports numeric id or wallet address id)
   socket.on('subscribe:user', (userId) => {
     try {
       if (!userId) return;
@@ -125,9 +125,14 @@ walletMonitor.on('newTrade', async (event) => {
     }
     
     console.log(`👥 Executing copy trades for ${users.length} user(s)`);
-    // Also emit detection to each user room
+    // Also emit detection to each user room. If a user is a wallet-auth user, they may subscribe using their wallet address as id
     for (const user of users) {
       io.to(`user:${user.id}`).emit('wallet:trade', event);
+      // If user email starts with wallet:addr, also emit to that room id
+      if (user.email?.startsWith('wallet:')) {
+        const walletId = user.email.replace('wallet:', '').toLowerCase();
+        io.to(`user:${walletId}`).emit('wallet:trade', event);
+      }
       console.log(`➡️ Emitted trade detection to user ${user.email} (ID: ${user.id})`);
     }
     
@@ -145,8 +150,12 @@ walletMonitor.on('newTrade', async (event) => {
         );
         if (statusRow && statusRow[0]?.status === 'running') {
           const result = await tradeExecutor.executeCopyTrade(event.trade, userWalletAddress);
-          // Emit executed trade only to this user
+          // Emit executed trade only to this user (by numeric id and wallet-id if exists)
           io.to(`user:${user.id}`).emit('trade:executed', { ...result, userId: user.id, userEmail: user.email });
+          if (user.email?.startsWith('wallet:')) {
+            const walletId = user.email.replace('wallet:', '').toLowerCase();
+            io.to(`user:${walletId}`).emit('trade:executed', { ...result, userId: walletId, userEmail: user.email });
+          }
 
         } else {
           console.log(`⏸️ Bot is not running for user ${user.email}, skipping trade execution.`);

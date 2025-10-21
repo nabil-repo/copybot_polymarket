@@ -1,17 +1,49 @@
 @import "tailwindcss";
 
 :root {
-  --foreground-rgb: 0, 0, 0;
-  --background-start-rgb: 214, 219, 220;
-  --background-end-rgb: 255, 255, 255;
+  --glass-bg: 255 255 255 / 0.07; /* hsla/rgba alpha */
+  --glass-border: 255 255 255 / 0.18;
+  --glass-shadow: 0 10px 25px rgba(0, 0, 0, 0.35);
+  --bg-from: 15 23 42; /* slate-900 */
+  --bg-to: 12 74 110; /* sky-900 */
+  --text: 241 245 249; /* slate-100 */
+}
+
+html, body {
+  height: 100%;
 }
 
 body {
-  color: rgb(var(--foreground-rgb));
-  background: linear-gradient(
-      to bottom,
-      transparent,
-      rgb(var(--background-end-rgb))
-    )
-    rgb(var(--background-start-rgb));
+  color: rgb(var(--text));
+  background:
+    radial-gradient(1200px 600px at 10% -10%, rgba(59,130,246,.25), transparent 60%),
+    radial-gradient(900px 500px at 110% 10%, rgba(168,85,247,.2), transparent 50%),
+    linear-gradient(135deg, rgb(var(--bg-from)), rgb(var(--bg-to)) 60%);
+  background-attachment: fixed;
+}
+
+/* Glassmorphism utility */
+.glass {
+  background: rgb(var(--glass-bg));
+  border: 1px solid rgb(var(--glass-border));
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: var(--glass-shadow);
+}
+
+.glass-hover:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* Scrollbar subtle style */
+*::-webkit-scrollbar {
+  height: 10px;
+  width: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.15);
+  border-radius: 9999px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
 }

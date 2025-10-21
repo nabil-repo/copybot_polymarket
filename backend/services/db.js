@@ -67,6 +67,15 @@ export async function initDb() {
     processed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(wallet, transaction_hash)
   )`);
+
+  // Wallet-based auth nonce storage
+  database.run(`CREATE TABLE IF NOT EXISTS wallet_auth (
+    address TEXT PRIMARY KEY,
+    nonce TEXT NOT NULL,
+    user_id INTEGER,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL
+  )`);
   
   // Migration: Add execution_wallet column if it doesn't exist
   try {

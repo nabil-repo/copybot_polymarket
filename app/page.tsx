@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { initializeSocket, onTradeExecuted, onWalletTrade, subscribeToWallet, subscribeToUser } from '@/lib/socket-client';
 import { getTradeHistory, getUserWallets, addUserWallet, removeUserWallet, loadAuthTokenFromStorage, getBotStatus, getUserProfile, startBot, stopBot } from '@/lib/api-client';
 import Leaderboard from "./leaderboard";
+import GlassCard from "@/components/ui/GlassCard";
 
  
 
@@ -23,6 +24,61 @@ export default function Home() {
   const [userWallets, setUserWallets] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
+
+  // Compute realized P&L and ROI from executed trades using a simple FIFO inventory model per market/outcome
+  const computeStats = (allTrades: any[]) => {
+    // Helper: normalize timestamp to ms
+    const toMs = (t: any) => t?.timestamp ? (t.timestamp > 1e12 ? t.timestamp : t.timestamp * 1000) : (t?.createdAt ? Date.parse(t.createdAt) : 0);
+
+    // All executed trades (for counting), regardless of size/price
+    const executedAll = allTrades.filter((t) => (t.status === 'executed' || t.executed));
+
+    // Executed trades with valid size/price/side (for P&L only)
+    const executed = executedAll.filter((t) => t.size && t.price && t.side);
+    // positions map per key
+    type Pos = { qty: number; cost: number; invested: number };
+    const positions = new Map<string, Pos>();
+    let realized = 0;
+    let investedTotal = 0;
+
+    // sort by time asc for correct FIFO processing
+    const sorted = [...executed].sort((a, b) => toMs(a) - toMs(b));
+
+    for (const tr of sorted) {
+      const size = Number(tr.size) || 0;
+      const price = Number(tr.price) || 0;
+      const side = String(tr.side || '').toLowerCase();
+      const key = tr.conditionId || `${tr.market || tr.title || 'unknown'}::${tr.outcome || ''}`;
+      if (!positions.has(key)) positions.set(key, { qty: 0, cost: 0, invested: 0 });
+      const pos = positions.get(key)!;
+
+      if (side === 'buy') {
+        pos.qty += size;
+        pos.cost += size * price;
+        pos.invested += size * price;
+        investedTotal += size * price;
+      } else if (side === 'sell') {
+        const closeQty = Math.min(size, pos.qty);
+        const avgCost = pos.qty > 0 ? pos.cost / pos.qty : 0;
+        realized += (price - avgCost) * closeQty;
+        pos.qty -= closeQty;
+        pos.cost -= avgCost * closeQty;
+        // Selling beyond position is ignored in this simple model (no shorts)
+      }
+    }
+
+    const today = new Date();
+    const todayTrades = executedAll.filter((t) => {
+      const tsMs = toMs(t);
+      if (!tsMs) return false;
+      const d = new Date(tsMs);
+      return d.toDateString() === today.toDateString();
+    }).length;
+
+    const totalPnl = Number(realized.toFixed(2));
+    const roi = investedTotal > 0 ? Number(((realized / investedTotal) * 100).toFixed(2)) : 0;
+    return { todayTrades, totalPnl, roi };
+  };
 
   useEffect(() => {
     // Check auth and load user data
@@ -61,15 +117,7 @@ export default function Home() {
     getTradeHistory()
       .then(tradeData => {
         setTrades(tradeData);
-        // Calculate stats
-        const today = new Date();
-        const todayTrades = tradeData.filter((t: any) => {
-          const tradeDate = new Date(t.timestamp || t.createdAt);
-          return tradeDate.toDateString() === today.toDateString();
-        }).length;
-        const totalPnl = tradeData.reduce((acc: number, t: any) => acc + (t.pnl || 0), 0);
-  const roi = totalPnl !== 0 && tradeData.length > 0 ? Number(((totalPnl / tradeData.length) * 100).toFixed(2)) : 0;
-  setStats({ todayTrades, totalPnl, roi });
+        setStats(computeStats(tradeData));
       })
       .catch(() => {
         setTrades([]);
@@ -107,11 +155,15 @@ export default function Home() {
     
     onTradeExecuted((result: any) => {
       console.log('[SOCKET] trade:executed event received', result);
-      // Update global trades table if exists
-      setTrades((prev) => [
-        { ...result, executed: true, status: 'executed', timestamp: result.timestamp || Date.now() / 1000 },
-        ...prev
-      ].slice(0, 50));
+      // Update global trades table and recompute stats
+      setTrades((prev) => {
+        const updated = [
+          { ...result, executed: true, status: 'executed', timestamp: result.timestamp || Date.now() / 1000 },
+          ...prev
+        ].slice(0, 200); // keep a bit more history for better stats
+        setStats(computeStats(updated));
+        return updated;
+      });
       // Update my activity list
       setMyTrades((prev) => [
         {
@@ -189,21 +241,17 @@ export default function Home() {
   }
 
   return (
-    <main className="min-h-screen p-8 bg-gray-50">
+    <main className="min-h-screen py-6">
       <div className="max-w-7xl mx-auto">
-        <header className="mb-8 flex justify-between items-center">
+        <header className="mb-8 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-4xl font-bold text-gray-900 mb-2">
-              Polymarket Copy Trading Bot
-            </h1>
-            <p className="text-gray-600">
-              Monitor and replicate trades from top Polymarket traders
-            </p>
+            <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white drop-shadow">Polymarket Copy Trading Bot</h1>
+            <p className="text-white/80">Monitor and replicate trades from top Polymarket traders</p>
           </div>
           <div className="flex gap-3">
             <button
               onClick={() => router.push('/settings')}
-              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+              className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white backdrop-blur border border-white/20 transition"
             >
               ⚙️ Settings
             </button>
@@ -212,7 +260,7 @@ export default function Home() {
                 localStorage.removeItem('auth_token');
                 router.push('/auth');
               }}
-              className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700"
+              className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white backdrop-blur border border-white/20 transition"
             >
               Sign Out
             </button>
@@ -220,18 +268,18 @@ export default function Home() {
         </header>
 
         {/* My Wallets Section */}
-        <div className="bg-white rounded-lg shadow p-6 mb-8">
-          <h2 className="text-xl font-semibold text-gray-900 mb-4">My Copy Trade Wallets</h2>
+        <GlassCard className="p-6 mb-8">
+          <h2 className="text-xl font-semibold text-white mb-4">My Copy Trade Wallets</h2>
           {userWallets.length === 0 ? (
-            <p className="text-gray-500">No wallets added yet. Add a wallet below to start copy trading.</p>
+            <p className="text-white/70">No wallets added yet. Add a wallet below to start copy trading.</p>
           ) : (
             <div className="space-y-2">
               {userWallets.map(wallet => (
-                <div key={wallet} className="flex items-center justify-between p-3 bg-gray-50 rounded">
-                  <span className="font-mono text-sm">{wallet}</span>
+                <div key={wallet} className="flex items-center justify-between p-3 bg-white/5 border border-white/10 rounded-xl">
+                  <span className="font-mono text-sm text-white/90">{wallet}</span>
                   <button
                     onClick={() => handleRemoveWallet(wallet)}
-                    className="px-3 py-1 bg-red-600 text-white text-sm rounded hover:bg-red-700"
+                    className="px-3 py-1 rounded-lg bg-red-500/80 hover:bg-red-500 text-white text-sm"
                   >
                     Remove
                   </button>
@@ -239,7 +287,7 @@ export default function Home() {
               ))}
             </div>
           )}
-        </div>
+        </GlassCard>
 
         {/* Leaderboard Section */}
         <Leaderboard onSelect={(w) => {
@@ -247,40 +295,40 @@ export default function Home() {
           try { subscribeToWallet(w); } catch {}
         }} />
         {/* Wallet Input Section */}
-        <div className="bg-white rounded-lg shadow p-6 mb-8">
-          <h2 className="text-xl font-semibold text-gray-900 mb-4">Add Trader Wallet</h2>
+        <GlassCard className="p-6 mb-8">
+          <h2 className="text-xl font-semibold text-white mb-4">Add Trader Wallet</h2>
           <div className="flex gap-4 items-center">
             <input
               type="text"
               placeholder="Enter wallet address"
               value={inputWallet}
               onChange={e => setInputWallet(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+              className="w-full px-3 py-2 rounded-xl bg-white/10 border border-white/20 text-white placeholder:text-white/60 focus:outline-none focus:ring-2 focus:ring-white/30 font-mono"
             />
             <button
-              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+              className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white"
               onClick={handleAddWallet}
             >
               Add
             </button>
           </div>
           {selectedWallet && (
-            <div className="mt-4 text-green-700 font-mono">
+            <div className="mt-4 text-emerald-300 font-mono">
               Copy trading enabled for: {selectedWallet}
             </div>
           )}
-        </div>
+        </GlassCard>
 
    
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           {/* Status Card */}
-          <div className="bg-white rounded-lg shadow p-6">
-            <h3 className="text-sm font-medium text-gray-500 mb-2">Bot Status</h3>
+          <GlassCard className="p-6">
+            <h3 className="text-sm font-medium text-white/70 mb-2">Bot Status</h3>
             <p className={
               botStatus && botStatus.status === 'running'
-                ? 'text-2xl font-bold text-green-600'
-                : 'text-2xl font-bold text-red-600'
+                ? 'text-2xl font-bold text-emerald-400'
+                : 'text-2xl font-bold text-rose-400'
             }>
               {botStatus
                 ? botStatus.status === 'running'
@@ -289,20 +337,20 @@ export default function Home() {
                 : 'Unknown'}
             </p>
             {botStatus && botStatus.started_at && (
-              <p className="text-sm text-gray-500 mt-2">Started: {new Date(botStatus.started_at).toLocaleString()}</p>
+              <p className="text-sm text-white/70 mt-2">Started: {new Date(botStatus.started_at).toLocaleString()}</p>
             )}
             {botStatus && botStatus.stopped_at && (
-              <p className="text-sm text-gray-500 mt-2">Stopped: {new Date(botStatus.stopped_at).toLocaleString()}</p>
+              <p className="text-sm text-white/70 mt-2">Stopped: {new Date(botStatus.stopped_at).toLocaleString()}</p>
             )}
-            <p className="text-sm text-gray-500 mt-2">Monitoring {userWallets.length} wallet{userWallets.length !== 1 ? 's' : ''}</p>
-          </div>
+            <p className="text-sm text-white/70 mt-2">Monitoring {userWallets.length} wallet{userWallets.length !== 1 ? 's' : ''}</p>
+          </GlassCard>
 
             {/* Bot Controls Card */}
-            <div className="bg-white rounded-lg shadow p-6 flex flex-col justify-between">
-              <h3 className="text-sm font-medium text-gray-500 mb-2">Bot Controls</h3>
+            <GlassCard className="p-6 flex flex-col justify-between">
+              <h3 className="text-sm font-medium text-white/70 mb-2">Bot Controls</h3>
               <div className="flex gap-3 mb-2">
                 <button
-                  className={`px-4 py-2 rounded-md font-semibold transition-colors ${botStatus && botStatus.status === 'running' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}
+                  className={`px-4 py-2 rounded-xl font-semibold transition-colors ${botStatus && botStatus.status === 'running' ? 'bg-white/10 text-white/50 cursor-not-allowed' : 'bg-emerald-600 text-white hover:bg-emerald-500'}`}
                     disabled={!!(botStatus && botStatus.status === 'running')}
                   onClick={async () => {
                     await startBot();
@@ -313,7 +361,7 @@ export default function Home() {
                   Start Bot
                 </button>
                 <button
-                  className={`px-4 py-2 rounded-md font-semibold transition-colors ${botStatus && botStatus.status !== 'running' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-red-600 text-white hover:bg-red-700'}`}
+                  className={`px-4 py-2 rounded-xl font-semibold transition-colors ${botStatus && botStatus.status !== 'running' ? 'bg-white/10 text-white/50 cursor-not-allowed' : 'bg-rose-600 text-white hover:bg-rose-500'}`}
                     disabled={!!(botStatus && botStatus.status !== 'running')}
                   onClick={async () => {
                     await stopBot();
@@ -324,111 +372,111 @@ export default function Home() {
                   Stop Bot
                 </button>
               </div>
-              <div className="text-xs text-gray-500">
+              <div className="text-xs text-white/70">
                 {botStatus && botStatus.status === 'running' ? 'Bot is currently running.' : 'Bot is stopped.'}
               </div>
-            </div>
+            </GlassCard>
 
           {/* Today's Trades */}
-          <div className="bg-white rounded-lg shadow p-6">
-            <h3 className="text-sm font-medium text-gray-500 mb-2">Today's Trades</h3>
-            <p className="text-2xl font-bold text-gray-900">{stats.todayTrades}</p>
-          </div>
+          <GlassCard className="p-6">
+            <h3 className="text-sm font-medium text-white/70 mb-2">Today's Trades</h3>
+            <p className="text-2xl font-bold text-white">{stats.todayTrades}</p>
+          </GlassCard>
 
           {/* P&L */}
-          <div className="bg-white rounded-lg shadow p-6">
-            <h3 className="text-sm font-medium text-gray-500 mb-2">Total P&L</h3>
-            <p className="text-2xl font-bold text-green-600">${stats.totalPnl}</p>
-            <p className="text-sm text-gray-500 mt-2">{stats.roi}% ROI</p>
-          </div>
+          <GlassCard className="p-6">
+            <h3 className="text-sm font-medium text-white/70 mb-2">Total P&L</h3>
+            <p className="text-2xl font-bold text-emerald-400">${stats.totalPnl}</p>
+            <p className="text-sm text-white/70 mt-2">{stats.roi}% ROI</p>
+          </GlassCard>
         </div>
 
         {/* My Recent Activity (current user) */}
-        <div className="bg-white rounded-lg shadow p-6 mb-8">
-          <h2 className="text-xl font-semibold text-gray-900 mb-4">My Recent Activity</h2>
+  <GlassCard className="p-6 mb-8 overflow-hidden">
+          <h2 className="text-xl font-semibold text-white mb-4">My Recent Activity</h2>
           {myTrades.length === 0 ? (
-            <p className="text-gray-500">No activity yet.</p>
+            <p className="text-white/70">No activity yet.</p>
           ) : (
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto max-h-96 overflow-y-auto">
               <table className="w-full">
-                <thead className="bg-gray-50">
+                <thead className="bg-white/10 sticky top-0 z-10">
                   <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Market</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Outcome</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Side</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Size</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Price</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-white/70 uppercase tracking-wider">Time</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-white/70 uppercase tracking-wider">Type</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-white/70 uppercase tracking-wider">Market</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-white/70 uppercase tracking-wider">Outcome</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-white/70 uppercase tracking-wider">Side</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-white/70 uppercase tracking-wider">Size</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-white/70 uppercase tracking-wider">Price</th>
                   </tr>
                 </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
+                <tbody className="divide-y divide-white/10">
                   {myTrades.map((t, i) => (
                     <tr key={i}>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{new Date(t.time).toLocaleString()}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-white/80">{new Date(t.time).toLocaleString()}</td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm">
-                        <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${t.type === 'executed' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
+                        <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${t.type === 'executed' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'}`}>
                           {t.type}
                         </span>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{t.market || '-'}</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{t.outcome || '-'}</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{t.side || '-'}</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{t.size !== undefined ? Number(t.size).toFixed(3) : '-'}</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{t.price !== undefined ? Number(t.price).toFixed(3) : '-'}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-white">{t.market || '-'}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-white">{t.outcome || '-'}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-white">{t.side || '-'}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-white">{t.size !== undefined ? Number(t.size).toFixed(3) : '-'}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-white">{t.price !== undefined ? Number(t.price).toFixed(3) : '-'}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
           )}
-        </div>
+        </GlassCard>
 
         {/* Recent Trades Table */}
-        <div className="bg-white rounded-lg shadow">
-          <div className="px-6 py-4 border-b border-gray-200">
-            <h2 className="text-xl font-semibold text-gray-900">Recent Trades</h2>
+        <GlassCard className="">
+          <div className="px-6 py-4 border-b border-white/10">
+            <h2 className="text-xl font-semibold text-white">Recent Trades</h2>
           </div>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto max-h-[28rem] overflow-y-auto">
             <table className="w-full">
-              <thead className="bg-gray-50">
+              <thead className="bg-white/10 sticky top-0 z-10">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Market</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Outcome</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Size</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Price</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-white/70 uppercase tracking-wider">Time</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-white/70 uppercase tracking-wider">Market</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-white/70 uppercase tracking-wider">Outcome</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-white/70 uppercase tracking-wider">Size</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-white/70 uppercase tracking-wider">Price</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-white/70 uppercase tracking-wider">Status</th>
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
+              <tbody className="divide-y divide-white/10">
                 {trades.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-6 py-4 text-center text-gray-500">No trades found.</td>
+                    <td colSpan={6} className="px-6 py-4 text-center text-white/70">No trades found.</td>
                   </tr>
                 ) : (
                   trades.map((trade, idx) => (
                     <tr key={trade.id || trade.transactionHash || idx}>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-white/80">
                         {trade.timestamp ? new Date(trade.timestamp * (trade.timestamp > 1e12 ? 1 : 1000)).toLocaleString() : (trade.createdAt ? new Date(trade.createdAt).toLocaleString() : '')}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-white">
                         {trade.market || trade.title || trade.slug || '-'}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-white">
                         {trade.outcome || '-'}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-white">
                         {trade.size ? `$${trade.size}` : '-'}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-white">
                         {trade.price ? `$${trade.price}` : '-'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span className={
                           trade.status === 'executed' || trade.executed
-                            ? "px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800"
-                            : "px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-800"
+                            ? "px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-emerald-500/20 text-emerald-300"
+                            : "px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-white/10 text-white/80"
                         }>
                           {trade.status === 'executed' || trade.executed ? 'Executed' : 'Pending'}
                         </span>
@@ -439,44 +487,44 @@ export default function Home() {
               </tbody>
             </table>
           </div>
-        </div>
+        </GlassCard>
 
         {/* Configuration Section */}
-        <div className="mt-8 bg-white rounded-lg shadow p-6">
-          <h2 className="text-xl font-semibold text-gray-900 mb-4">Configuration</h2>
+        <GlassCard className="mt-8 p-6">
+          <h2 className="text-xl font-semibold text-white mb-4">Configuration</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-white/80 mb-2">
                 Copy Ratio
               </label>
               <input
                 type="number"
                 step="0.01"
                 defaultValue="0.10"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 rounded-xl bg-white/10 border border-white/20 text-white placeholder:text-white/60 focus:outline-none focus:ring-2 focus:ring-white/30"
               />
-              <p className="mt-1 text-sm text-gray-500">
+              <p className="mt-1 text-sm text-white/70">
                 Position size multiplier (0.1 = 10% of whale's position)
               </p>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-white/80 mb-2">
                 Max Position Size
               </label>
               <input
                 type="number"
                 defaultValue="100"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 rounded-xl bg-white/10 border border-white/20 text-white placeholder:text-white/60 focus:outline-none focus:ring-2 focus:ring-white/30"
               />
-              <p className="mt-1 text-sm text-gray-500">
+              <p className="mt-1 text-sm text-white/70">
                 Maximum USD amount per position
               </p>
             </div>
           </div>
-          <button className="mt-6 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors">
+          <button className="mt-6 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white transition-colors">
             Save Changes
           </button>
-        </div>
+        </GlassCard>
       </div>
     </main>
   );

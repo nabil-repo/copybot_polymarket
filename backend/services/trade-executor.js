@@ -128,17 +128,21 @@ export class TradeExecutionService {
       throw new Error(`USDC_CONTRACT_ADDRESS missing in .env`);
     }
 
+    // Ensure addresses are properly formatted to avoid ENS resolution attempts
+    const checksummedUsdcAddress = ethers.getAddress(usdcAddress);
+    const checksummedWalletAddress = ethers.getAddress(walletAddress);
+
     const usdcAbi = [
       "function balanceOf(address owner) view returns (uint256)",
       "function decimals() view returns (uint8)",
     ];
 
     const usdcContract = new ethers.Contract(
-      usdcAddress,
+      checksummedUsdcAddress,
       usdcAbi,
       this.provider
     );
-    const balance = await usdcContract.balanceOf(walletAddress);
+    const balance = await usdcContract.balanceOf(checksummedWalletAddress);
     const decimals = await usdcContract.decimals();
 
     return Number(ethers.formatUnits(balance, decimals));
@@ -149,15 +153,40 @@ export class TradeExecutionService {
    * TODO: Integrate with actual Polymarket smart contracts
    */
   async submitOrder(orderParams) {
-    // Placeholder implementation
+    // Basic placeholder implementation with optional Lit signing
     console.log("📝 Submitting order:", orderParams);
 
-    // In production, this would:
-    // 1. Build order parameters for CTF Exchange
-    // 2. Sign the order using Lit Protocol wallet
-    // 3. Submit to Polymarket exchange contract
-    // 4. Wait for confirmation
+    // If the caller provided an encryptedKey + auth context, attempt Lit-based signing
+    if (
+      process.env.USE_LIT === "true" &&
+      orderParams.encryptedKey &&
+      orderParams.accessControlConditions &&
+      orderParams.authSig
+    ) {
+      try {
+        // Build a minimal tx payload (caller should adapt to real contract ABI)
+        const tx = {
+          to: process.env.VAULT_CONTRACT_ADDRESS || undefined,
+          value: "0x0",
+          data: "0x",
+        };
 
+        const signed = await this.litWallet.signTransaction(
+          orderParams.encryptedKey,
+          tx,
+          orderParams.accessControlConditions,
+          orderParams.authSig
+        );
+
+        // return signed tx hash placeholder (in real flow you'd broadcast signed to provider)
+        return { txHash: signed.slice(0, 66), orderId: `order_${Date.now()}` };
+      } catch (e) {
+        console.log("❌ Lit signing failed:", e);
+        // fall through to fake response
+      }
+    }
+
+    // Fallback fake response (for dev/testing)
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
     return {

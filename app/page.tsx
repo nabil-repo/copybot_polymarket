@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { initializeSocket, onTradeExecuted, onWalletTrade, subscribeToWallet, subscribeToUser } from '@/lib/socket-client';
+import { initializeSocket, onTradeExecuted, onWalletTrade, onTradeWarning, subscribeToWallet, subscribeToUser } from '@/lib/socket-client';
 import { getTradeHistory, getUserWallets, addUserWallet, removeUserWallet, loadAuthTokenFromStorage, getBotStatus, getUserProfile, startBot, stopBot } from '@/lib/api-client';
 import Leaderboard from "./leaderboard";
 import GlassCard from "@/components/ui/GlassCard";
@@ -23,7 +23,14 @@ export default function Home() {
   const [inputWallet, setInputWallet] = useState("");
   const [userWallets, setUserWallets] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+  const [notification, setNotification] = useState<{ type: 'warning' | 'error' | 'success'; message: string } | null>(null);
   const router = useRouter();
+
+  // Show notification with auto-dismiss
+  const showNotification = (type: 'warning' | 'error' | 'success', message: string) => {
+    setNotification({ type, message });
+    setTimeout(() => setNotification(null), 8000); // Auto-dismiss after 8 seconds
+  };
 
   // Compute realized P&L and ROI from executed trades using a simple FIFO inventory model per market/outcome
   const computeStats = (allTrades: any[]) => {
@@ -200,6 +207,14 @@ export default function Home() {
         ...prev
       ].slice(0, 25));
     });
+
+    // Listen for trade warnings (e.g., missing API credentials)
+    onTradeWarning((warning: any) => {
+      console.log('[SOCKET] trade:warning event received', warning);
+      if (warning.type === 'missing_api_credentials') {
+        showNotification('warning', warning.message || 'Please configure your Polymarket API credentials');
+      }
+    });
     
     // Don't disconnect in cleanup - socket is a singleton that should persist
     // Only remove our event listeners to prevent duplicates on remount
@@ -242,6 +257,48 @@ export default function Home() {
 
   return (
     <main className="min-h-screen py-6">
+      {/* Notification Toast */}
+      {notification && (
+        <div className="fixed top-4 right-4 z-50 animate-slide-in">
+          <div className={`
+            px-6 py-4 rounded-xl backdrop-blur border shadow-lg max-w-md
+            ${notification.type === 'warning' ? 'bg-amber-500/90 border-amber-400/50 text-white' : ''}
+            ${notification.type === 'error' ? 'bg-rose-500/90 border-rose-400/50 text-white' : ''}
+            ${notification.type === 'success' ? 'bg-emerald-500/90 border-emerald-400/50 text-white' : ''}
+          `}>
+            <div className="flex items-start gap-3">
+              <span className="text-2xl">
+                {notification.type === 'warning' ? '⚠️' : ''}
+                {notification.type === 'error' ? '❌' : ''}
+                {notification.type === 'success' ? '✅' : ''}
+              </span>
+              <div className="flex-1">
+                <p className="font-semibold mb-1">
+                  {notification.type === 'warning' ? 'Configuration Required' : ''}
+                  {notification.type === 'error' ? 'Error' : ''}
+                  {notification.type === 'success' ? 'Success' : ''}
+                </p>
+                <p className="text-sm">{notification.message}</p>
+                {notification.type === 'warning' && (
+                  <button
+                    onClick={() => router.push('/settings')}
+                    className="mt-2 px-3 py-1 rounded-lg bg-white/20 hover:bg-white/30 text-white text-sm font-medium transition"
+                  >
+                    Go to Settings
+                  </button>
+                )}
+              </div>
+              <button
+                onClick={() => setNotification(null)}
+                className="text-white/80 hover:text-white text-xl leading-none"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="max-w-7xl mx-auto">
         <header className="mb-8 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>

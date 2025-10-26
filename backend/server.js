@@ -149,8 +149,30 @@ walletMonitor.on('newTrade', async (event) => {
           [user.id]
         );
         if (statusRow && statusRow[0]?.status === 'running') {
-          const result = await tradeExecutor.executeCopyTrade(event.trade, userWalletAddress);
-          // Emit executed trade only to this user (by numeric id and wallet-id if exists)
+          // Pass user ID so trade executor can fetch Lit wallet if needed
+          const result = await tradeExecutor.executeCopyTrade(event.trade, userWalletAddress, user.id);
+          
+          // Check if API credentials are missing and emit warning
+          if (result.needsApiCredentials) {
+            console.log(`⚠️ User ${user.email} needs to configure Polymarket API credentials`);
+            
+            // Emit warning to user (by numeric id and wallet-id if exists)
+            const warningPayload = {
+              type: 'missing_api_credentials',
+              message: 'Please configure your Polymarket CLOB API credentials in Settings to execute trades',
+              userId: user.id,
+              userEmail: user.email,
+              timestamp: Date.now() / 1000
+            };
+            
+            io.to(`user:${user.id}`).emit('trade:warning', warningPayload);
+            if (user.email?.startsWith('wallet:')) {
+              const walletId = user.email.replace('wallet:', '').toLowerCase();
+              io.to(`user:${walletId}`).emit('trade:warning', warningPayload);
+            }
+          }
+          
+          // Emit executed trade result to this user (by numeric id and wallet-id if exists)
           io.to(`user:${user.id}`).emit('trade:executed', { ...result, userId: user.id, userEmail: user.email });
           if (user.email?.startsWith('wallet:')) {
             const walletId = user.email.replace('wallet:', '').toLowerCase();

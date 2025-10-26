@@ -163,6 +163,28 @@ export const removeUserWallet = async (wallet: string) => {
   return response.data;
 };
 
+// Polymarket API Credentials
+export const storePolymarketCredentials = async (apiKey: string, apiSecret: string) => {
+  const response = await api.post('/api/user/polymarket/credentials', { apiKey, apiSecret });
+  return response.data as { ok: boolean };
+};
+
+export const checkPolymarketCredentials = async () => {
+  const response = await api.get('/api/user/polymarket/credentials');
+  return response.data as { configured: boolean };
+};
+
+export const deletePolymarketCredentials = async () => {
+  const response = await api.delete('/api/user/polymarket/credentials');
+  return response.data as { ok: boolean };
+};
+
+// Derive Polymarket API credentials from a private key (not stored)
+export const derivePolymarketCredentials = async (privateKey: string, signatureType: number = 1) => {
+  const response = await api.post('/api/user/polymarket/derive', { privateKey, signatureType });
+  return response.data as { ok: boolean };
+};
+
 // Health check
 export const checkHealth = async () => {
   const response = await api.get('/health');

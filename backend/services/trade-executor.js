@@ -1,11 +1,16 @@
 import { ethers } from "ethers";
 import { LitWalletService } from "./lit-wallet.js";
+import { get } from "./db.js";
+import { getStoredAuthSig } from "./auto-wallet-creator.js";
+import { getPolymarketCredentials, storePolymarketCredentials } from "./polymarket-credentials.js";
+import { derivePolymarketApiKey } from "./polymarket-clob.js";
+import fetch from 'node-fetch';
 
 // Ensure .env variables are loaded
 import "dotenv/config";
 
 /**
- * Trade execution service with Lit Protocol wallet integration
+ * Trade execution service with Polymarket API integration
  */
 export class TradeExecutionService {
   constructor() {
@@ -19,8 +24,11 @@ export class TradeExecutionService {
     this.slippageTolerance = parseFloat(
       process.env.SLIPPAGE_TOLERANCE || "0.01"
     );
+    // By default, we skip on-chain USDC checks to avoid MockUSDC/contract deps
+    this.skipOnchainBalanceCheck = (process.env.SKIP_ONCHAIN_BALANCE_CHECK || 'true') === 'true';
 
     this.litWallet = new LitWalletService();
+    this.polymarketApiBaseUrl = 'https://clob.polymarket.com';
   }
 
   async initialize() {
@@ -31,12 +39,11 @@ export class TradeExecutionService {
    * Execute copy trade
    * @param {Object} originalTrade - Trade data from monitored wallet
    * @param {string} walletAddress - User's wallet address (from DB)
+   * @param {number} userId - User ID to fetch encrypted wallet (optional)
    */
-  async executeCopyTrade(originalTrade, walletAddress) {
+  async executeCopyTrade(originalTrade, walletAddress, userId = null) {
     try {
-      if (!walletAddress) {
-        throw new Error("walletAddress is required for trade execution");
-      }
+      // walletAddress is optional when skipping on-chain checks
 
       // Calculate copy size
       let copySize = originalTrade.size * this.copyRatio;
@@ -57,12 +64,15 @@ export class TradeExecutionService {
         price: originalTrade.price,
       });
 
-      // Check balance (USDC on ETH)
-      const balance = await this.checkUSDCBalance(walletAddress);
-      const requiredAmount = copySize * originalTrade.price;
-
-      if (balance < requiredAmount) {
-        throw new Error(`Insufficient balance: ${balance} < ${requiredAmount}`);
+      // Optional: Check balance on-chain (disabled by default)
+      if (!this.skipOnchainBalanceCheck && walletAddress) {
+        const balance = await this.checkUSDCBalance(walletAddress);
+        const requiredAmount = copySize * originalTrade.price;
+        if (balance < requiredAmount) {
+          throw new Error(`Insufficient balance: ${balance} < ${requiredAmount}`);
+        }
+      } else {
+        console.log('⚖️ Skipping on-chain USDC balance check (SKIP_ONCHAIN_BALANCE_CHECK=true)');
       }
 
       // Calculate price with slippage
@@ -77,11 +87,24 @@ export class TradeExecutionService {
         side: originalTrade.side || "BUY", // Default to BUY for copy trades
         size: copySize,
         price: priceWithSlippage,
+        userId, // Pass userId to fetch encrypted wallet
+        walletAddress, // Pass for potential funder hint during auto-derive
       });
+
+      // Check if API credentials are missing
+      if (result.needsApiCredentials) {
+        throw new Error(result.error || "Polymarket API credentials not configured");
+      }
+
+      // Check if API call failed
+      if (result.apiError) {
+        throw new Error(result.error || "Polymarket API request failed");
+      }
 
       return {
         success: true,
         txHash: result.txHash,
+        orderId: result.orderId,
         // Flatten data for frontend
         market: marketTitle,
         title: marketTitle,
@@ -94,12 +117,18 @@ export class TradeExecutionService {
         originalPrice: originalTrade.price,
         wallet: walletAddress,
         timestamp: Date.now() / 1000,
+        usedPolymarketAPI: result.usedPolymarketAPI,
       };
     } catch (error) {
       console.log("❌ Trade execution failed:", error);
+      
+      // Check if this is a "needs API credentials" error
+      const needsApiCredentials = error.message?.includes("API credentials not configured");
+      
       return {
         success: false,
         error: error.message,
+        needsApiCredentials, // Flag for frontend to prompt user
         // Include basic info even on failure
         market: originalTrade.title || originalTrade.slug || "Unknown",
         outcome: originalTrade.outcome,
@@ -149,49 +178,133 @@ export class TradeExecutionService {
   }
 
   /**
-   * Submit order to Polymarket CTF Exchange
-   * TODO: Integrate with actual Polymarket smart contracts
+   * Submit order to Polymarket via API
+   * Uses user's stored encrypted API credentials
    */
   async submitOrder(orderParams) {
-    // Basic placeholder implementation with optional Lit signing
     console.log("📝 Submitting order:", orderParams);
 
-    // If the caller provided an encryptedKey + auth context, attempt Lit-based signing
-    if (
-      process.env.USE_LIT === "true" &&
-      orderParams.encryptedKey &&
-      orderParams.accessControlConditions &&
-      orderParams.authSig
-    ) {
+    const userId = orderParams.userId;
+
+    // Try to use Polymarket API if user has credentials
+    if (userId) {
       try {
-        // Build a minimal tx payload (caller should adapt to real contract ABI)
-        const tx = {
-          to: process.env.VAULT_CONTRACT_ADDRESS || undefined,
-          value: "0x0",
-          data: "0x",
-        };
+        console.log("🔑 Attempting Polymarket API order for user", userId);
 
-        const signed = await this.litWallet.signTransaction(
-          orderParams.encryptedKey,
-          tx,
-          orderParams.accessControlConditions,
-          orderParams.authSig
-        );
+        // Get user's encrypted Polymarket credentials
+        const credentials = await getPolymarketCredentials(userId);
 
-        // return signed tx hash placeholder (in real flow you'd broadcast signed to provider)
-        return { txHash: signed.slice(0, 66), orderId: `order_${Date.now()}` };
+        if (!credentials) {
+          // Try to auto-derive using server-side PRIVATE_KEY if available
+          const autoPk = process.env.PRIVATE_KEY;
+          if (autoPk) {
+            try {
+              console.log("🧩 Auto-deriving Polymarket API credentials using server PRIVATE_KEY...");
+              // Use execution wallet as funder if available (best effort)
+              const funder = orderParams.walletAddress || '';
+              const { apiKey, apiSecret } = await derivePolymarketApiKey({ privateKey: autoPk, funder });
+              const saved = await storePolymarketCredentials(userId, apiKey, apiSecret);
+              if (saved) {
+                console.log("✅ Auto-derived and stored Polymarket API credentials for user", userId);
+              }
+            } catch (autoErr) {
+              console.warn("⚠️ Auto-derive failed:", autoErr?.message || autoErr);
+            }
+
+            // Re-check after attempted derive
+            const after = await getPolymarketCredentials(userId);
+            if (!after) {
+              const errorMsg = "⚠️ No Polymarket CLOB API credentials configured. Please add your API key and secret in Settings.";
+              console.log(errorMsg);
+              return {
+                success: false,
+                error: errorMsg,
+                needsApiCredentials: true,
+                promptUser: true,
+                txHash: null,
+                orderId: null
+              };
+            }
+            // Proceed with newly stored credentials
+            credentials = after;
+          } else {
+            const errorMsg = "⚠️ No Polymarket CLOB API credentials configured. Please add your API key and secret in Settings.";
+            console.log(errorMsg);
+            return {
+              success: false,
+              error: errorMsg,
+              needsApiCredentials: true,
+              promptUser: true,
+              txHash: null,
+              orderId: null
+            };
+          }
+        }
+
+        if (credentials) {
+          console.log("✅ Retrieved Polymarket API credentials for user", userId);
+
+          // Build order payload for Polymarket API
+          const orderPayload = {
+            market: orderParams.conditionId,
+            asset_id: orderParams.asset,
+            side: orderParams.side.toLowerCase(), // 'buy' or 'sell'
+            size: orderParams.size.toString(),
+            price: orderParams.price.toString(),
+            outcome: orderParams.outcome
+          };
+
+          // Submit order to Polymarket
+          const response = await fetch(`${this.polymarketApiBaseUrl}/orders`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${credentials.apiKey}`,
+              'X-API-Secret': credentials.apiSecret
+            },
+            body: JSON.stringify(orderPayload)
+          });
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            console.error("❌ Polymarket API error:", response.status, errorText);
+            throw new Error(`Polymarket API error: ${response.status}`);
+          }
+
+          const result = await response.json();
+          console.log("✅ Order submitted to Polymarket:", result);
+
+          return {
+            txHash: result.transaction_hash || result.order_id || `pm_${Date.now()}`,
+            orderId: result.order_id || `order_${Date.now()}`,
+            usedPolymarketAPI: true,
+            orderDetails: result
+          };
+  }
       } catch (e) {
-        console.log("❌ Lit signing failed:", e);
-        // fall through to fake response
+        console.error("❌ Polymarket API submission failed:", e.message);
+        
+        // Return error with API failure details
+        return {
+          success: false,
+          error: `Polymarket API error: ${e.message}`,
+          apiError: true,
+          txHash: null,
+          orderId: null
+        };
       }
     }
 
-    // Fallback fake response (for dev/testing)
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-
+    // If no userId provided, cannot execute trade
+    const errorMsg = "❌ Cannot execute trade: User ID required for API authentication";
+    console.log(errorMsg);
+    
     return {
-      txHash: `0x${Math.random().toString(16).slice(2, 66)}`,
-      orderId: `order_${Date.now()}`,
+      success: false,
+      error: errorMsg,
+      needsUserId: true,
+      txHash: null,
+      orderId: null
     };
   }
 

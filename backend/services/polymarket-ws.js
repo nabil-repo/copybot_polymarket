@@ -35,7 +35,9 @@ export class PolymarketWebSocketClient extends EventEmitter {
 
         this.ws.on('error', (error) => {
           console.log('WebSocket error:', error);
-          this.emit('error', error);
+          // Don't emit 'error' on EventEmitter to avoid unhandled error crashes
+          // Instead, schedule reconnect and continue
+          this.scheduleReconnect();
         });
 
         this.ws.on('close', () => {

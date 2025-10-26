@@ -76,6 +76,33 @@ export async function initDb() {
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL
   )`);
+
+  // Lit Protocol encrypted wallets
+  database.run(`CREATE TABLE IF NOT EXISTS encrypted_wallets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    wallet_address TEXT NOT NULL,
+    cipher_hex TEXT NOT NULL,
+    iv_hex TEXT NOT NULL,
+    encrypted_symmetric_key TEXT NOT NULL,
+    access_control_conditions TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id),
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+  )`);
+
+  // Polymarket API credentials (encrypted)
+  database.run(`CREATE TABLE IF NOT EXISTS polymarket_credentials (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    encrypted_api_key TEXT NOT NULL,
+    encrypted_api_secret TEXT NOT NULL,
+    encryption_iv TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id),
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+  )`);
   
   // Migration: Add execution_wallet column if it doesn't exist
   try {

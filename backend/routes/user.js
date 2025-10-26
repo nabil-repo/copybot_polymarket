@@ -1,8 +1,18 @@
 import { Router } from 'express';
 import { run, all, get } from '../services/db.js';
 import { authMiddleware } from './auth.js';
+import { LitWalletService } from '../services/lit-wallet.js';
+import {
+  storePolymarketCredentials,
+  getPolymarketCredentials,
+  hasPolymarketCredentials,
+  deletePolymarketCredentials
+} from '../services/polymarket-credentials.js';
+import { derivePolymarketApiKey } from '../services/polymarket-clob.js';
 
 export const userRouter = Router();
+
+const litWallet = new LitWalletService();
 
 // Get user profile including execution wallet
 userRouter.get('/profile', authMiddleware, async (req, res) => {
@@ -95,5 +105,228 @@ userRouter.post('/bot-stop', authMiddleware, async (req, res) => {
   } catch (err) {
     console.error('bot stop error', err);
     res.status(500).json({ error: 'bot_stop_failed' });
+  }
+});
+
+// ============= LIT PROTOCOL WALLET ENDPOINTS =============
+
+// Create an encrypted wallet using Lit Protocol
+userRouter.post('/lit-wallet/create', authMiddleware, async (req, res) => {
+  try {
+    const { authSig, accessControlConditions } = req.body || {};
+    
+    if (!authSig || !accessControlConditions) {
+      return res.status(400).json({ 
+        error: 'missing_params',
+        message: 'authSig and accessControlConditions are required' 
+      });
+    }
+
+    // Initialize Lit client if not already connected
+    await litWallet.initialize();
+
+    // Create encrypted wallet
+    const encryptedWallet = await litWallet.createEncryptedWallet(
+      accessControlConditions,
+      authSig
+    );
+
+    // Store encrypted wallet in database
+    await run(
+      `INSERT OR REPLACE INTO encrypted_wallets 
+       (user_id, wallet_address, cipher_hex, iv_hex, encrypted_symmetric_key, access_control_conditions) 
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        req.user.dbUserId,
+        encryptedWallet.address.toLowerCase(),
+        encryptedWallet.encryptedKey.cipherHex,
+        encryptedWallet.encryptedKey.ivHex,
+        encryptedWallet.encryptedKey.encryptedSymmetricKey,
+        JSON.stringify(accessControlConditions)
+      ]
+    );
+
+    // Also update execution_wallet to this new address
+    await run(
+      'UPDATE users SET execution_wallet = ? WHERE id = ?',
+      [encryptedWallet.address.toLowerCase(), req.user.dbUserId]
+    );
+
+    console.log('✅ Created Lit-encrypted wallet for user', req.user.dbUserId);
+
+    res.json({
+      ok: true,
+      address: encryptedWallet.address,
+      message: 'Encrypted wallet created and stored successfully'
+    });
+  } catch (err) {
+    console.error('❌ Lit wallet creation error:', err);
+    res.status(500).json({ 
+      error: 'wallet_creation_failed',
+      message: err.message 
+    });
+  }
+});
+
+// ============= POLYMARKET API CREDENTIALS ENDPOINTS =============
+
+// Store Polymarket API credentials (encrypted)
+userRouter.post('/polymarket/credentials', authMiddleware, async (req, res) => {
+  try {
+    const { apiKey, apiSecret } = req.body || {};
+    
+    if (!apiKey || !apiSecret) {
+      return res.status(400).json({ 
+        error: 'missing_credentials',
+        message: 'Both apiKey and apiSecret are required' 
+      });
+    }
+
+    // Validate API key format (basic check)
+    if (typeof apiKey !== 'string' || apiKey.length < 10) {
+      return res.status(400).json({ 
+        error: 'invalid_api_key',
+        message: 'API key appears invalid' 
+      });
+    }
+
+    // Store encrypted credentials
+    const success = await storePolymarketCredentials(
+      req.user.dbUserId,
+      apiKey,
+      apiSecret
+    );
+
+    if (!success) {
+      return res.status(500).json({ 
+        error: 'storage_failed',
+        message: 'Failed to store credentials' 
+      });
+    }
+
+    res.json({
+      ok: true,
+      message: 'Polymarket API credentials stored securely'
+    });
+  } catch (err) {
+    console.error('❌ Store Polymarket credentials error:', err);
+    res.status(500).json({ 
+      error: 'credentials_storage_failed',
+      message: err.message 
+    });
+  }
+});
+
+// Check if user has Polymarket credentials
+userRouter.get('/polymarket/credentials', authMiddleware, async (req, res) => {
+  try {
+    const hasCredentials = await hasPolymarketCredentials(req.user.dbUserId);
+    
+    res.json({
+      configured: hasCredentials,
+      message: hasCredentials 
+        ? 'Polymarket API credentials are configured' 
+        : 'No Polymarket API credentials found'
+    });
+  } catch (err) {
+    console.error('❌ Check Polymarket credentials error:', err);
+    res.status(500).json({ 
+      error: 'credentials_check_failed',
+      message: err.message 
+    });
+  }
+});
+
+// Delete Polymarket credentials
+userRouter.delete('/polymarket/credentials', authMiddleware, async (req, res) => {
+  try {
+    const success = await deletePolymarketCredentials(req.user.dbUserId);
+    
+    if (!success) {
+      return res.status(500).json({ 
+        error: 'deletion_failed',
+        message: 'Failed to delete credentials' 
+      });
+    }
+
+    res.json({
+      ok: true,
+      message: 'Polymarket API credentials deleted'
+    });
+  } catch (err) {
+    console.error('❌ Delete Polymarket credentials error:', err);
+    res.status(500).json({ 
+      error: 'credentials_deletion_failed',
+      message: err.message 
+    });
+  }
+});
+
+// Derive Polymarket API credentials using a signer private key and store them
+userRouter.post('/polymarket/derive', authMiddleware, async (req, res) => {
+  try {
+    const { privateKey, funder, signatureType } = req.body || {};
+
+    // Prefer explicit privateKey; fallback to env PRIVATE_KEY for dev
+    const signerPk = privateKey || process.env.PRIVATE_KEY;
+
+    if (!signerPk) {
+      return res.status(400).json({
+        error: 'missing_private_key',
+        message: 'Provide privateKey in body or set PRIVATE_KEY in .env on the server.',
+      });
+    }
+
+    // Funder defaults to the user's execution wallet if not provided
+    let effectiveFunder = funder;
+    if (!effectiveFunder) {
+      const row = await get('SELECT execution_wallet FROM users WHERE id = ?', [req.user.dbUserId]);
+      effectiveFunder = row?.execution_wallet || '';
+    }
+
+    const { apiKey, apiSecret } = await derivePolymarketApiKey({
+      privateKey: signerPk,
+      funder: effectiveFunder,
+      signatureType,
+    });
+
+    const stored = await storePolymarketCredentials(req.user.dbUserId, apiKey, apiSecret);
+    if (!stored) {
+      return res.status(500).json({ error: 'storage_failed', message: 'Failed to store derived credentials' });
+    }
+
+    res.json({ ok: true, message: 'Derived and stored Polymarket API credentials' });
+  } catch (err) {
+    console.error('❌ Derive Polymarket credentials error:', err);
+    res.status(500).json({ error: 'derive_failed', message: err.message });
+  }
+});
+
+// Get encrypted wallet info (not the private key!)
+userRouter.get('/lit-wallet', authMiddleware, async (req, res) => {
+  try {
+    const wallet = await get(
+      'SELECT wallet_address, created_at FROM encrypted_wallets WHERE user_id = ?',
+      [req.user.dbUserId]
+    );
+
+    if (!wallet) {
+      return res.json({ 
+        exists: false,
+        message: 'No encrypted wallet found. Create one first.' 
+      });
+    }
+
+    res.json({
+      exists: true,
+      address: wallet.wallet_address,
+      created_at: wallet.created_at
+    });
+  } catch (err) {
+    console.error('❌ Get Lit wallet error:', err);
+    res.status(500).json({ 
+      error: 'get_wallet_failed',
+      message: err.message 
+    });
   }
 });

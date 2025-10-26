@@ -87,6 +87,13 @@ export const onTradeExecuted = (callback: (data: any) => void) => {
   socket.on('trade:executed', callback);
 };
 
+export const onTradeWarning = (callback: (data: any) => void) => {
+  const socket = getSocket();
+  // Remove any existing listeners to prevent duplicates
+  socket.off('trade:warning');
+  socket.on('trade:warning', callback);
+};
+
 export const onPriceUpdate = (callback: (data: any) => void) => {
   const socket = getSocket();
   // Remove any existing listeners to prevent duplicates

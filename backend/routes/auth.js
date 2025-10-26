@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken';
 import { run, get } from '../services/db.js';
 import crypto from 'crypto';
 import { verifyMessage, getAddress } from 'ethers';
+import { autoCreateLitWallet } from '../services/auto-wallet-creator.js';
 
 export const authRouter = Router();
 
@@ -17,6 +18,14 @@ authRouter.post('/register', async (req, res) => {
     const info = await run('INSERT INTO users (email, password_hash) VALUES (?, ?)', [email, hash]);
     const user = { id: info.lastInsertRowid, email };
     const token = jwt.sign({ sub: user.id, email }, JWT_SECRET, { expiresIn: '7d' });
+    
+    // Auto-create Lit wallet for new user (async, don't block response)
+    if (process.env.AUTO_CREATE_WALLETS === 'true') {
+      autoCreateLitWallet(user.id).catch(err => {
+        console.error('Auto wallet creation failed for user', user.id, err);
+      });
+    }
+    
     res.json({ user, token });
   } catch (err) {
     if (String(err.message).includes('UNIQUE')) return res.status(409).json({ error: 'email_exists' });
@@ -33,6 +42,14 @@ authRouter.post('/login', async (req, res) => {
   const ok = bcrypt.compareSync(password, row.password_hash);
   if (!ok) return res.status(401).json({ error: 'invalid_credentials' });
   const token = jwt.sign({ sub: row.id, email: row.email }, JWT_SECRET, { expiresIn: '7d' });
+  
+  // Auto-create Lit wallet if user doesn't have one (async, don't block response)
+  if (process.env.AUTO_CREATE_WALLETS === 'true') {
+    autoCreateLitWallet(row.id).catch(err => {
+      console.error('Auto wallet creation failed for user', row.id, err);
+    });
+  }
+  
   res.json({ user: { id: row.id, email: row.email }, token });
 });
 
@@ -122,6 +139,14 @@ authRouter.post('/wallet/verify', async (req, res) => {
 
     // Sign JWT with the wallet address as the public subject id; include internal dbUserId for server-side queries
     const token = jwt.sign({ sub: addr, wallet: addr, dbUserId: userId }, JWT_SECRET, { expiresIn: '7d' });
+    
+    // Auto-create Lit wallet for wallet-authenticated user (async, don't block response)
+    if (process.env.AUTO_CREATE_WALLETS === 'true') {
+      autoCreateLitWallet(userId, checksumAddr).catch(err => {
+        console.error('Auto wallet creation failed for user', userId, err);
+      });
+    }
+    
     res.json({ user: { id: addr, email: `wallet:${addr}` }, token });
   } catch (err) {
     console.error('wallet verify error', err);

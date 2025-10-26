@@ -15,11 +15,6 @@ cd backend
 node server.js
 ```
 
-📖 **See [QUICKSTART.md](./QUICKSTART.md) for detailed setup guide**
-
-### Production Deployment
-See [SETUP.md](./SETUP.md) for deploying to  mainnet.
-
 ## 🎯 Features
 
 - ⚡ **Real-time monitoring** of whale trader wallets
@@ -143,13 +138,13 @@ npm run contracts:console
    ```bash
    EVM_RPC_URL=http://127.0.0.1:8545
    USDC_CONTRACT_ADDRESS=<from deployment>
-   PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+   PRIVATE_KEY=
    ```
    
    **For Production:**
    ```bash
    EVM_RPC_URL=
-   USDC_CONTRACT_ADDRESS=0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174
+   USDC_CONTRACT_ADDRESS=
    PRIVATE_KEY=<your_real_private_key>
    POLYMARKET_API_KEY=<your_api_key>
    ```

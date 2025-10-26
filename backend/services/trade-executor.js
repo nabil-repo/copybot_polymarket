@@ -72,7 +72,7 @@ export class TradeExecutionService {
           throw new Error(`Insufficient balance: ${balance} < ${requiredAmount}`);
         }
       } else {
-        console.log('⚖️ Skipping on-chain USDC balance check (SKIP_ONCHAIN_BALANCE_CHECK=true)');
+       // console.log('⚖️ Skipping on-chain USDC balance check (SKIP_ONCHAIN_BALANCE_CHECK=true)');
       }
 
       // Calculate price with slippage
@@ -92,9 +92,9 @@ export class TradeExecutionService {
       });
 
       // Check if API credentials are missing
-      if (result.needsApiCredentials) {
-        throw new Error(result.error || "Polymarket API credentials not configured");
-      }
+      // if (result.needsApiCredentials) {
+      //   throw new Error(result.error || "Polymarket API credentials not configured");
+      // }
 
       // Check if API call failed
       if (result.apiError) {
@@ -205,17 +205,17 @@ export class TradeExecutionService {
               const { apiKey, apiSecret } = await derivePolymarketApiKey({ privateKey: autoPk, funder });
               const saved = await storePolymarketCredentials(userId, apiKey, apiSecret);
               if (saved) {
-                console.log("✅ Auto-derived and stored Polymarket API credentials for user", userId);
+               // console.log("✅ Auto-derived and stored Polymarket API credentials for user", userId);
               }
             } catch (autoErr) {
-              console.warn("⚠️ Auto-derive failed:", autoErr?.message || autoErr);
+              //console.warn("⚠️ Auto-derive failed:", autoErr?.message || autoErr);
             }
 
             // Re-check after attempted derive
             const after = await getPolymarketCredentials(userId);
             if (!after) {
               const errorMsg = "⚠️ No Polymarket CLOB API credentials configured. Please add your API key and secret in Settings.";
-              console.log(errorMsg);
+           //   console.log(errorMsg);
               return {
                 success: false,
                 error: errorMsg,
@@ -229,7 +229,7 @@ export class TradeExecutionService {
             credentials = after;
           } else {
             const errorMsg = "⚠️ No Polymarket CLOB API credentials configured. Please add your API key and secret in Settings.";
-            console.log(errorMsg);
+           // console.log(errorMsg);
             return {
               success: false,
               error: errorMsg,

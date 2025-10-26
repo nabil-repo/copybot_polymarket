@@ -7,7 +7,7 @@ import { getTradeHistory, getUserWallets, addUserWallet, removeUserWallet, loadA
 import Leaderboard from "./leaderboard";
 import GlassCard from "@/components/ui/GlassCard";
 
- 
+
 
 export default function Home() {
   const [botStatus, setBotStatus] = useState<{ status: string; started_at: string | null; stopped_at: string | null } | null>(null);
@@ -91,7 +91,7 @@ export default function Home() {
     // Check auth and load user data
     loadAuthTokenFromStorage();
     const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
-    
+
     if (!token) {
       router.push('/auth');
       return;
@@ -100,9 +100,9 @@ export default function Home() {
     // Load user profile then subscribe to user room
     getUserProfile().then((prof) => {
       if (prof?.id) {
-        try { subscribeToUser(prof.id); } catch {}
+        try { subscribeToUser(prof.id); } catch { }
       }
-    }).catch(() => {});
+    }).catch(() => { });
 
     // Load user wallets
     getUserWallets()
@@ -135,31 +135,31 @@ export default function Home() {
     console.log('[SOCKET] Initialized:', socket);
     console.log('[SOCKET] Connected?', socket.connected);
     console.log('[SOCKET] Connecting to:', process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:4000');
-    
+
     // Remove any existing listeners to prevent duplicates
     socket.off('connect');
     socket.off('disconnect');
     socket.off('connect_error');
     socket.off('error');
-    
+
     socket.on('connect', () => {
       console.log('✅ [SOCKET] Connected! Socket ID:', socket.id);
       console.log('[SOCKET] Transport:', socket.io.engine?.transport?.name);
     });
-    
+
     socket.on('disconnect', (reason: any) => {
       console.warn('❌ [SOCKET] Disconnected. Reason:', reason);
     });
-    
+
     socket.on('connect_error', (err: any) => {
       console.error('🔴 [SOCKET] Connection error:', err.message);
       console.error('[SOCKET] Error details:', err);
     });
-    
+
     socket.on('error', (err: any) => {
       console.error('🔴 [SOCKET] Socket error:', err);
     });
-    
+
     onTradeExecuted((result: any) => {
       console.log('[SOCKET] trade:executed event received', result);
       // Update global trades table and recompute stats
@@ -215,7 +215,7 @@ export default function Home() {
         showNotification('warning', warning.message || 'Please configure your Polymarket API credentials');
       }
     });
-    
+
     // Don't disconnect in cleanup - socket is a singleton that should persist
     // Only remove our event listeners to prevent duplicates on remount
     return () => {
@@ -227,11 +227,18 @@ export default function Home() {
   const handleAddWallet = async () => {
     if (!inputWallet) return;
     try {
-      await addUserWallet(inputWallet);
-      setUserWallets([...userWallets, inputWallet.toLowerCase()]);
-      setSelectedWallet(inputWallet);
+      const wLc = inputWallet.toLowerCase();
+      if (userWallets.includes(wLc)) {
+        setInputWallet("");
+        setSelectedWallet(wLc);
+        try { subscribeToWallet(wLc); } catch {}
+        return;
+      }
+      await addUserWallet(wLc);
+      setUserWallets([...userWallets, wLc]);
+      setSelectedWallet(wLc);
       setInputWallet("");
-      try { subscribeToWallet(inputWallet); } catch {}
+      try { subscribeToWallet(wLc); } catch { }
     } catch (err) {
       console.error('Failed to add wallet:', err);
     }
@@ -306,12 +313,12 @@ export default function Home() {
             <p className="text-white/80">Monitor and replicate trades from top Polymarket traders</p>
           </div>
           <div className="flex gap-3">
-            <button
+            {/* <button
               onClick={() => router.push('/settings')}
               className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white backdrop-blur border border-white/20 transition"
             >
               ⚙️ Settings
-            </button>
+            </button> */}
             <button
               onClick={() => {
                 localStorage.removeItem('auth_token');
@@ -326,7 +333,7 @@ export default function Home() {
 
         {/* My Wallets Section */}
         <GlassCard className="p-6 mb-8">
-          <h2 className="text-xl font-semibold text-white mb-4">My Copy Trade Wallets</h2>
+          <h2 className="text-xl font-semibold text-white mb-4">My Copy Trade Target Wallets</h2>
           {userWallets.length === 0 ? (
             <p className="text-white/70">No wallets added yet. Add a wallet below to start copy trading.</p>
           ) : (
@@ -347,9 +354,17 @@ export default function Home() {
         </GlassCard>
 
         {/* Leaderboard Section */}
-        <Leaderboard onSelect={(w) => {
-          setSelectedWallet(w);
-          try { subscribeToWallet(w); } catch {}
+        <Leaderboard onSelect={async (w) => {
+          const wLc = (w || '').toLowerCase();
+          if (!wLc) return;
+          if (!/^0x[a-f0-9]{40}$/.test(wLc)) return;
+          // Avoid duplicates locally
+          if (!userWallets.includes(wLc)) {
+            try { await addUserWallet(wLc); } catch (e) { console.error('addUserWallet failed', e); }
+            setUserWallets([...userWallets, wLc]);
+          }
+          setSelectedWallet(wLc);
+          try { subscribeToWallet(wLc); } catch { }
         }} />
         {/* Wallet Input Section */}
         <GlassCard className="p-6 mb-8">
@@ -376,7 +391,7 @@ export default function Home() {
           )}
         </GlassCard>
 
-   
+
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           {/* Status Card */}
@@ -402,37 +417,37 @@ export default function Home() {
             <p className="text-sm text-white/70 mt-2">Monitoring {userWallets.length} wallet{userWallets.length !== 1 ? 's' : ''}</p>
           </GlassCard>
 
-            {/* Bot Controls Card */}
-            <GlassCard className="p-6 flex flex-col justify-between">
-              <h3 className="text-sm font-medium text-white/70 mb-2">Bot Controls</h3>
-              <div className="flex gap-3 mb-2">
-                <button
-                  className={`px-4 py-2 rounded-xl font-semibold transition-colors ${botStatus && botStatus.status === 'running' ? 'bg-white/10 text-white/50 cursor-not-allowed' : 'bg-emerald-600 text-white hover:bg-emerald-500'}`}
-                    disabled={!!(botStatus && botStatus.status === 'running')}
-                  onClick={async () => {
-                    await startBot();
-                    const status = await getBotStatus();
-                    setBotStatus(status);
-                  }}
-                >
-                  Start Bot
-                </button>
-                <button
-                  className={`px-4 py-2 rounded-xl font-semibold transition-colors ${botStatus && botStatus.status !== 'running' ? 'bg-white/10 text-white/50 cursor-not-allowed' : 'bg-rose-600 text-white hover:bg-rose-500'}`}
-                    disabled={!!(botStatus && botStatus.status !== 'running')}
-                  onClick={async () => {
-                    await stopBot();
-                    const status = await getBotStatus();
-                    setBotStatus(status);
-                  }}
-                >
-                  Stop Bot
-                </button>
-              </div>
-              <div className="text-xs text-white/70">
-                {botStatus && botStatus.status === 'running' ? 'Bot is currently running.' : 'Bot is stopped.'}
-              </div>
-            </GlassCard>
+          {/* Bot Controls Card */}
+          <GlassCard className="p-6 flex flex-col justify-between">
+            <h3 className="text-sm font-medium text-white/70 mb-2">Bot Controls</h3>
+            <div className="flex gap-3 mb-2">
+              <button
+                className={`px-4 py-2 rounded-xl font-semibold transition-colors ${botStatus && botStatus.status === 'running' ? 'bg-white/10 text-white/50 cursor-not-allowed' : 'bg-emerald-600 text-white hover:bg-emerald-500'}`}
+                disabled={!!(botStatus && botStatus.status === 'running')}
+                onClick={async () => {
+                  await startBot();
+                  const status = await getBotStatus();
+                  setBotStatus(status);
+                }}
+              >
+                Start Bot
+              </button>
+              <button
+                className={`px-4 py-2 rounded-xl font-semibold transition-colors ${botStatus && botStatus.status !== 'running' ? 'bg-white/10 text-white/50 cursor-not-allowed' : 'bg-rose-600 text-white hover:bg-rose-500'}`}
+                disabled={!!(botStatus && botStatus.status !== 'running')}
+                onClick={async () => {
+                  await stopBot();
+                  const status = await getBotStatus();
+                  setBotStatus(status);
+                }}
+              >
+                Stop Bot
+              </button>
+            </div>
+            <div className="text-xs text-white/70">
+              {botStatus && botStatus.status === 'running' ? 'Bot is currently running.' : 'Bot is stopped.'}
+            </div>
+          </GlassCard>
 
           {/* Today's Trades */}
           <GlassCard className="p-6">
@@ -449,7 +464,7 @@ export default function Home() {
         </div>
 
         {/* My Recent Activity (current user) */}
-  <GlassCard className="p-6 mb-8 overflow-hidden">
+        <GlassCard className="p-6 mb-8 overflow-hidden">
           <h2 className="text-xl font-semibold text-white mb-4">My Recent Activity</h2>
           {myTrades.length === 0 ? (
             <p className="text-white/70">No activity yet.</p>

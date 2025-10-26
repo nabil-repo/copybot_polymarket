@@ -159,7 +159,7 @@ export const addUserWallet = async (wallet: string) => {
   return response.data;
 };
 export const removeUserWallet = async (wallet: string) => {
-  const response = await api.delete(`/api/user/wallets/${wallet}`);
+  const response = await api.delete(`/api/user/wallets/${encodeURIComponent(wallet)}`);
   return response.data;
 };
 

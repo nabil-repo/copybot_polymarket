@@ -4,21 +4,15 @@ A production-grade copy trading bot for Polymarket with real-time WebSocket feed
 
 ## 🚀 Quick Start
 
-### Local Testing (Recommended)
-Start testing in 5 minutes with local Hardhat blockchain:
+### Local Setup:
 
 ```bash
-# Terminal 1: Start local blockchain
-npm run contracts:start
-
-# Terminal 2: Deploy contracts
-npm run contracts:deploy
-
-# Terminal 3: Start backend (after updating .env)
-npm run backend
-
-# Terminal 4: Start frontend
+#for frontend
 npm run dev
+
+#for backend 
+cd backend
+node server.js
 ```
 
 📖 **See [QUICKSTART.md](./QUICKSTART.md) for detailed setup guide**
@@ -307,9 +301,6 @@ tail -f logs/trades-2025-10-15.json
 - Ensure using `@import "tailwindcss"` not `@tailwind` directives
 - Verify `@tailwindcss/postcss` is installed
 
-## 📝 License
-
-MIT
 
 ## ⚠️ Disclaimer
 

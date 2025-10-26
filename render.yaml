@@ -13,8 +13,8 @@ services:
         value: production
       - key: PORT
         value: 4000
-      - key: DATABASE_URL
-        sync: false  # REQUIRED: Set in Render dashboard - Neon Postgres connection string
+      - key: DB_PATH
+        value: ./data.db
       - key: ENCRYPTION_KEY
         sync: false  # REQUIRED: 64 hex chars - generate with: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
       - key: JWT_SECRET
@@ -64,8 +64,5 @@ services:
       - key: NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID
         value: d1cedaacac6d453d6bfd54d65b52346f
 
-# Database: Use Neon Postgres (external)
-# 1. Create database at https://neon.tech (free tier available)
-# 2. Copy connection string from Neon dashboard
-# 3. Set DATABASE_URL in backend service environment variables on Render
-# Format: postgresql://user:password@host.neon.tech/database?sslmode=require
+# Note: Render ephemeral filesystem is not persistent. SQLite is suitable only for dev/demo on Render.
+# For production, consider a managed Postgres (e.g., Neon), but this blueprint is now SQLite-only by request.

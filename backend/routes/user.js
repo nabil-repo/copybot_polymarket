@@ -63,6 +63,23 @@ userRouter.post('/wallets', authMiddleware, async (req, res) => {
   }
 });
 
+// Remove a wallet for the authenticated user
+userRouter.delete('/wallets/:wallet', authMiddleware, async (req, res) => {
+  try {
+    const raw = req.params.wallet || '';
+    // Normalize to lowercase to match storage
+    const wallet = decodeURIComponent(raw).toLowerCase();
+    if (!/^0x[a-f0-9]{40}$/.test(wallet)) {
+      return res.status(400).json({ error: 'invalid_wallet_address' });
+    }
+    const result = await run('DELETE FROM user_wallets WHERE user_id = ? AND wallet = ?', [req.user.dbUserId, wallet]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('remove wallet error', err);
+    res.status(500).json({ error: 'remove_wallet_failed' });
+  }
+});
+
 
 // Get bot status for the authenticated user
 userRouter.get('/bot-status', authMiddleware, async (req, res) => {
